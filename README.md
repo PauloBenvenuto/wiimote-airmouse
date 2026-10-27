@@ -20,7 +20,7 @@ escribe en un ratón+teclado virtual (uinput). Incluye:
 ## Instalar
 
 ```
-git clone git@github.com:PauloBenvenuto/wiimote-airmouse.git ~/src/wiimote-airmouse
+git clone https://github.com/PauloBenvenuto/wiimote-airmouse.git ~/src/wiimote-airmouse
 cd ~/src/wiimote-airmouse && makepkg -si
 systemctl --user enable --now wiimote-airmouse
 ```
