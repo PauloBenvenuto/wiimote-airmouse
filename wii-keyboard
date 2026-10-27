@@ -1,0 +1,257 @@
+#!/usr/bin/env python3
+# Teclado en pantalla para el Wiimote: input method de Wayland (input-method-v2, que
+# Hyprland soporta). Las apps con text-input-v3 (Firefox/Zen, GTK, Qt) avisan cuando un campo de
+# texto recibe o pierde el foco → pide a la interfaz que muestre el teclado ([ui] ipc de
+# airmouse.toml + "wiikbd open|close") si además el mando acaba de hacer clic (orden click; así no
+# sale solo cuando una página pone el foco en un campo) y su perfil está en keyboard.profiles; lo
+# oculta al perder el foco. La interfaz manda por el socket
+# $XDG_RUNTIME_DIR/wii-keyboard.sock (una línea JSON por orden): commit (escribe el texto en el
+# campo), backspace y enter (teclas por uinput), click (A del mando), closed (el usuario lo cerró), toggle (acción
+# "keyboard" del mando), profile (el mando cambió de perfil), quit.
+# Lo arranca y lo para wiimote-airmouse al conectar/desconectar el mando (una sola instancia).
+# Uso: wii-keyboard [--debug]
+import json
+import os
+import select
+import shlex
+import socket
+import subprocess
+import sys
+import time
+import tomllib
+from pathlib import Path
+
+import evdev
+from evdev import ecodes as e
+
+HERE = Path(__file__).resolve().parent
+PROTOCOLS = [
+    Path("/usr/share/wayland/wayland.xml"),
+    Path("/usr/share/wayland-protocols/unstable/text-input/text-input-unstable-v3.xml"),
+    next(p for p in (HERE / "protocols", Path("/usr/share/wiimote-airmouse/protocols"))
+         if p.is_dir()) / "input-method-unstable-v2.xml",
+]
+CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "wii-keyboard"
+SOCK = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")) / "wii-keyboard.sock"
+STATE = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "wiimote-airmouse/profile"
+CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "wiimote/airmouse.toml"
+DEBUG = "--debug" in sys.argv[1:]  # registra los eventos del input method
+CLICK_WINDOW = 0.8  # s: un foco (o un movimiento del cursor de texto) tan cerca de un clic lo abre
+CLOSE_DELAY = 0.3   # s: perder y recuperar el foco enseguida (las apps lo hacen al hacer clic) no lo cierra
+
+
+def log(msg):
+    print(f"wii-keyboard: {msg}", flush=True)
+
+
+def load_protocols():
+    """Genera los módulos de pywayland (wayland + text-input-v3 + input-method-v2) en la caché."""
+    stamp = "-".join(str(int(p.stat().st_mtime)) for p in PROTOCOLS)
+    pkg = CACHE / "wiikbd_protocols"
+    stamp_file = pkg / ".stamp"
+    if not stamp_file.exists() or stamp_file.read_text() != stamp:
+        pkg.mkdir(parents=True, exist_ok=True)
+        subprocess.run([sys.executable, "-m", "pywayland.scanner", "-o", str(pkg), "-i", *map(str, PROTOCOLS)],
+                       check=True)
+        (pkg / "__init__.py").touch()
+        stamp_file.write_text(stamp)
+    sys.path.insert(0, str(CACHE))
+    from wiikbd_protocols.input_method_unstable_v2 import ZwpInputMethodManagerV2
+    from wiikbd_protocols.wayland import WlSeat
+    return ZwpInputMethodManagerV2, WlSeat
+
+
+def load_config():
+    try:
+        with open(CONFIG, "rb") as f:
+            return tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+
+
+def allowed_profiles():
+    profiles = load_config().get("keyboard", {}).get("profiles", ["Multimedia"])
+    return [str(p) for p in profiles] if isinstance(profiles, list) else ["Multimedia"]
+
+
+def ui_ipc():
+    """Orden IPC de la interfaz ([ui] ipc) para el objetivo wiikbd; [] si no hay interfaz."""
+    prefix = shlex.split(str(load_config().get("ui", {}).get("ipc", "")))
+    return prefix + ["wiikbd"] if prefix else []
+
+
+def current_profile():
+    try:
+        return STATE.read_text().strip()
+    except OSError:
+        return ""
+
+
+def open_socket():
+    """Socket de órdenes; None si ya hay otra instancia escuchando."""
+    probe = socket.socket(socket.AF_UNIX)
+    try:
+        probe.connect(str(SOCK))
+        probe.close()
+        return None
+    except OSError:
+        probe.close()
+    SOCK.unlink(missing_ok=True)
+    server = socket.socket(socket.AF_UNIX)
+    server.bind(str(SOCK))
+    server.listen()
+    return server
+
+
+class Keyboard:
+    def __init__(self):
+        from pywayland.client import Display
+
+        manager_cls, seat_cls = load_protocols()
+        self.display = Display()
+        self.display.connect()
+        found = {}
+
+        def on_global(registry, name, interface, version):
+            if interface == "wl_seat" and "seat" not in found:
+                found["seat"] = registry.bind(name, seat_cls, min(version, 1))
+            elif interface == "zwp_input_method_manager_v2":
+                found["manager"] = registry.bind(name, manager_cls, 1)
+
+        registry = self.display.get_registry()
+        registry.dispatcher["global"] = on_global
+        self.display.roundtrip()
+        if "manager" not in found or "seat" not in found:
+            raise RuntimeError("the compositor does not support input-method-v2")
+        self.im = found["manager"].get_input_method(found["seat"])
+        self.serial = 0           # número de done recibidos (lo pide commit)
+        self.active = False       # hay un campo de texto con foco
+        self.pending = False      # estado que llega con el siguiente done
+        self.shown = False
+        self.last_click = 0.0     # último clic del mando
+        self.last_done = 0.0
+        self.close_at = None      # cierre pendiente (el campo perdió el foco)
+        self.im.dispatcher["activate"] = lambda *_: setattr(self, "pending", True)
+        self.im.dispatcher["deactivate"] = lambda *_: setattr(self, "pending", False)
+        self.im.dispatcher["done"] = self.on_done
+        self.im.dispatcher["unavailable"] = self.on_unavailable
+        self.display.roundtrip()
+        self.ui = evdev.UInput({e.EV_KEY: [e.KEY_ENTER, e.KEY_BACKSPACE]}, name="Wii Keyboard")
+
+    def on_done(self, *_):
+        self.serial += 1
+        self.last_done = time.monotonic()
+        if DEBUG:
+            log(f"done (serial {self.serial}): field {'focused' if self.pending else 'not focused'}")
+        self.active = self.pending
+        if self.active:
+            self.close_at = None
+            # Solo se abre si el campo pide texto justo tras un clic del mando (foco o cursor de texto)
+            if self.last_done - self.last_click < CLICK_WINDOW:
+                self.update()
+        elif self.shown and self.close_at is None:
+            self.close_at = self.last_done + CLOSE_DELAY
+
+    def on_unavailable(self, *_):
+        log("another input method is running; exiting")
+        sys.exit(1)
+
+    def update(self):
+        profile, allowed = current_profile(), allowed_profiles()
+        if DEBUG:
+            log(f"profile {profile!r}, allowed {allowed}")
+        self.show(self.active and profile in allowed)
+
+    def show(self, on):
+        if on != self.shown:
+            self.shown = on
+            if DEBUG:
+                log("open" if on else "close")
+            ipc = ui_ipc()
+            if ipc:
+                subprocess.Popen(ipc + ["open" if on else "close"],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def tap(self, code):
+        self.ui.write(e.EV_KEY, code, 1)
+        self.ui.syn()
+        self.ui.write(e.EV_KEY, code, 0)
+        self.ui.syn()
+
+    def command(self, msg):
+        cmd = msg.get("cmd")
+        if cmd == "commit" and msg.get("text") and self.active:
+            self.im.commit_string(str(msg["text"]))
+            self.im.commit(self.serial)
+        elif cmd == "backspace":
+            self.tap(e.KEY_BACKSPACE)
+        elif cmd == "enter":
+            self.display.roundtrip()  # que el texto llegue antes que el Enter
+            self.tap(e.KEY_ENTER)
+        elif cmd == "click":
+            self.last_click = time.monotonic()
+            if self.last_click - self.last_done < 0.3:  # el done se adelantó a la orden
+                self.update()
+        elif cmd == "closed":
+            # Lo cerró el usuario (OK, Cancel, ↵): ese clic no cuenta para volver a abrirlo
+            self.shown = False
+            self.last_click = 0.0
+            self.close_at = None
+        elif cmd == "toggle":
+            self.show(not self.shown and self.active)  # acción "keyboard" del mando
+        elif cmd == "profile" and self.shown:
+            self.update()  # el perfil nuevo puede ocultarlo, no abrirlo
+        elif cmd == "quit":
+            return False
+        return True
+
+    def run(self, server):
+        clients = {}  # socket → búfer
+        running = True
+        while running:
+            self.display.flush()
+            timeout = None if self.close_at is None else max(0.0, self.close_at - time.monotonic())
+            ready, _, _ = select.select([self.display.get_fd(), server, *clients], [], [], timeout)
+            if self.close_at is not None and time.monotonic() >= self.close_at:
+                self.close_at = None
+                if not self.active:
+                    self.show(False)
+            for r in ready:
+                if r == self.display.get_fd():
+                    if self.display.dispatch(block=True) == -1:
+                        log("Wayland connection lost")
+                        return
+                elif r is server:
+                    conn, _ = server.accept()
+                    clients[conn] = b""
+                else:
+                    data = r.recv(4096)
+                    if not data:
+                        clients.pop(r)
+                        r.close()
+                        continue
+                    *lines, clients[r] = (clients[r] + data).split(b"\n")
+                    for line in lines:
+                        try:
+                            running = self.command(json.loads(line)) and running
+                        except ValueError:
+                            pass
+        self.show(False)
+
+
+def main():
+    server = open_socket()
+    if server is None:
+        return  # ya está en marcha
+    try:
+        Keyboard().run(server)
+    except (RuntimeError, OSError, subprocess.CalledProcessError, ImportError) as err:
+        log(str(err))
+        sys.exit(1)
+    finally:
+        server.close()
+        SOCK.unlink(missing_ok=True)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,171 @@
+# Wiimote como air mouse: copia este archivo a ~/.config/wiimote/airmouse.toml. Tras editar:
+#   systemctl --user reload wiimote-airmouse
+# Para ver valores crudos y ajustar: systemctl --user stop wiimote-airmouse && wiimote-airmouse --debug
+
+[pointer]
+# Velocidad: span = grados que hay que girar para cruzar todo el escritorio, de borde a borde
+# de los monitores (se recalcula al conectar/quitar uno). Menos = cursor más rápido.
+# span = 0 → velocidad fija de sensitivity píxeles por grado.
+span = 60.0
+sensitivity = 35.0
+acceleration = 0.0   # >0: más rápido al girar rápido (×(1 + acceleration × °/s ÷ 100)); 0 = lineal
+# Suavizado (filtro 1€): al apuntar despacio corta el temblor por encima de min_cutoff Hz y el
+# corte sube beta Hz por cada °/s de giro, así los giros rápidos no se retrasan.
+# Tiembla al apuntar → baja min_cutoff (1–2); se nota retardo al arrancar → súbelo (4–6).
+# Se queda atrás en giros rápidos → sube beta (0.5–1)
+min_cutoff = 3.0
+beta = 0.3
+deadzone = 2.0       # °/s que se ignoran (temblor); de deadzone a 2×deadzone entra poco a poco
+# Ejes del giroscopio: ABS_RX = yaw (izquierda/derecha), ABS_RZ = pitch (arriba/abajo)
+x_axis = "ABS_RX"
+x_invert = true
+y_axis = "ABS_RZ"
+y_invert = false
+
+[rest]
+# Reposo = giro y acelerómetro estables durante window_ms: el cursor se queda quieto
+# y se recalibra el offset del giroscopio
+gyro_threshold = 1.5    # desviación típica máxima del giro (°/s)
+accel_threshold = 3.0   # desviación típica máxima del acelerómetro (unidades crudas)
+window_ms = 400
+learn_rate = 0.05       # cuánto se corrige el offset en cada informe en reposo (0–1)
+
+[cursor]
+# Tema de cursor (instalado en ~/.local/share/icons o /usr/share/icons) mientras se usa el
+# mando; vuelve al tema normal al mover el ratón. "" = no cambiar
+theme = ""
+size = 64           # tamaño del cursor del mando; el normal no cambia
+switch_px = 40      # recorrido del mando (px) para cambiar de cursor: el temblor no cuenta
+
+[power]
+# Ahorro de batería: hid-wiimote solo enciende el MotionPlus y el acelerómetro mientras se leen
+sleep_after_s = 300   # quieto este tiempo → apaga los sensores; un botón lo despierta (sin hacer su acción). 0 = nunca
+off_after_min = 30    # quieto este tiempo → lo desconecta (se apaga; vuelve al pulsar un botón). 0 = nunca
+low_battery = 15      # % al que avisa con una notificación
+# En modo juego no se duerme ni se apaga
+
+[buttons]
+# Botones comunes a todos los perfiles (cada perfil cambia solo los suyos, abajo).
+# Acciones:
+#   "button:BTN_LEFT" | "key:KEY_ENTER" | "key:KEY_LEFTMETA+KEY_V" (combinación; códigos de
+#     linux/input-event-codes.h) — se mantienen mientras se mantiene el botón
+#   "keys:KEY_LEFTCTRL+KEY_A, KEY_BACKSPACE" (secuencia, al pulsar)
+#   "exec:<comando>" (vía Hyprland, como un atajo) | 'dispatch:hl.dsp.…' (dispatcher Lua)
+#   "profile:next" | "profile:prev" | "profile:<nombre>"
+#   "pad:BTN_SOUTH" (botón del mando virtual; para [gamepad])
+#   "clutch" (embrague: el cursor no se mueve) | "cleartext" (borrar todo el texto; en
+#     terminales Ctrl+E Ctrl+U) | "wsdrag" (arrastrar la ventana a otro escritorio)
+#   "keyboard" (abrir/cerrar el teclado en pantalla si hay un campo de texto con foco) | "none"
+# Dos botones juntos: "a+b" = … (pulsarlos a la vez, con 150 ms de margen)
+a = "button:BTN_LEFT"
+b = "button:BTN_RIGHT"
+one = "key:KEY_ENTER"
+two = "key:KEY_LEFTMETA+KEY_SPACE"         # launcher (pon el atajo de tu config)
+home = "exec:walker"                       # menú o lanzador
+up = "key:KEY_PAGEUP"                      # página arriba (scroll)
+down = "key:KEY_PAGEDOWN"
+left = "key:KEY_LEFT"
+right = "key:KEY_RIGHT"
+plus = "key:KEY_VOLUMEUP"                  # usa el atajo de volumen de Hyprland (OSD de swayosd)
+minus = "key:KEY_VOLUMEDOWN"
+
+[hold]
+# Acción al mantener un botón más de delay_ms; pulsarlo y soltar antes hace la de [buttons]
+# al soltar (esos botones no sirven para arrastrar).
+delay_ms = 300
+b = "clutch"            # recolocar la muñeca sin mover el cursor
+home = "profile:next"   # cambiar de perfil (notificación + LED del mando)
+# one = "exec:<orden que muestre wiimote-airmouse --describe>"   # mapa de botones
+
+[labels]
+# Nombre (en inglés) de una acción en el mapa de botones (mantener 1); las teclas comunes ya lo tienen
+"key:KEY_LEFTMETA+KEY_SPACE" = "Launcher"
+"exec:walker" = "Menu"
+"key:KEY_LEFTMETA+KEY_TAB" = "Window switcher"
+"key:KEY_LEFTMETA+KEY_LEFTSHIFT+KEY_F" = "Maximize / restore"
+"key:KEY_LEFTMETA+KEY_F" = "Fullscreen"
+"key:KEY_LEFTMETA+KEY_V" = "Float / tile"
+"key:KEY_LEFTMETA+BTN_LEFT" = "Move window"
+"key:KEY_LEFTMETA+KEY_LEFTSHIFT+KEY_Q" = "Close window"
+'dispatch:hl.dsp.focus({ workspace = "e-1" })' = "Previous workspace"
+'dispatch:hl.dsp.focus({ workspace = "e+1" })' = "Next workspace"
+'dispatch:hl.dsp.window.move({ workspace = "+1", follow = false })' = "Window to next workspace"
+'dispatch:hl.dsp.window.move({ workspace = "-1", follow = false })' = "Window to previous workspace"
+"key:KEY_ESC" = "Cancel (Esc)"
+
+# ── Perfiles ── en este orden; Home mantenido pasa al siguiente. Cada uno cambia solo los
+# botones que pone ([profiles.X.hold] para los de mantener). El elegido se recuerda.
+
+[profiles.Mouse]
+# Ratón: los botones de arriba tal cual
+
+[profiles.Windows]
+# Ventanas: atajos de SUPER habituales en Hyprland (ajústalos a los tuyos)
+"a+b" = "wsdrag"        # mantener A+B: arrastrar la ventana a otro escritorio (necesita [ui])
+one = "key:KEY_LEFTMETA+KEY_TAB"   # ventana anterior (selector de ventanas)
+two = "key:KEY_LEFTMETA+KEY_LEFTSHIFT+KEY_F"  # maximizar / restaurar
+up = "key:KEY_LEFTMETA+KEY_F"      # pantalla completa
+down = "key:KEY_LEFTMETA+KEY_V"    # flotante
+left = 'dispatch:hl.dsp.focus({ workspace = "e-1" })'    # escritorio anterior
+right = 'dispatch:hl.dsp.focus({ workspace = "e+1" })'   # escritorio siguiente
+plus = 'dispatch:hl.dsp.window.move({ workspace = "+1", follow = false })'   # ventana al siguiente
+minus = 'dispatch:hl.dsp.window.move({ workspace = "-1", follow = false })'  # ventana al anterior
+
+[profiles.Windows.hold]
+a = "key:KEY_LEFTMETA+BTN_LEFT"          # mover la ventana arrastrando (pulsar = clic normal)
+minus = "key:KEY_LEFTMETA+KEY_LEFTSHIFT+KEY_Q"  # cerrar ventana
+
+[profiles.Text]
+# Texto / Claude: 1 = Enter (de arriba), flechas para historial y opciones
+up = "key:KEY_UP"
+down = "key:KEY_DOWN"
+plus = "key:KEY_ESC"    # cancelar
+minus = "cleartext"     # borrar todo lo escrito
+two = "none"            # pendiente: dictado (mantener para hablar)
+
+[profiles.Multimedia]
+# Vídeo y música: cada reproductor decide qué hacen las flechas (en general, ←→ saltar)
+one = "key:KEY_PLAYPAUSE"   # reproducir / pausar (atajo de Hyprland → playerctl)
+two = "key:KEY_MUTE"
+up = "key:KEY_UP"
+down = "key:KEY_DOWN"
+
+[profiles.Multimedia.hold]
+two = "keyboard"            # volver a abrir el teclado sin cambiar de campo
+
+[keyboard]
+# Teclado en pantalla (wii-keyboard, necesita [ui]): aparece al hacer clic en un campo de texto
+# con uno de estos perfiles (Chromium necesita --enable-wayland-ime --wayland-text-input-version=3)
+profiles = ["Multimedia"]
+
+[ui]
+# Interfaz externa para el teclado en pantalla y wsdrag: prefijo de la orden IPC (se añade el
+# objetivo y la función: "wiikbd open|close", "wsdrag start <ventana>|drop|cancel").
+# Protocolo en el README. "" = sin interfaz
+ipc = ""
+
+# ── Modo juego ── automático, no es un perfil: si la ventana enfocada es de un juego de la lista
+# (parte de su clase, ver hyprctl clients), los botones de aquí van a un mando virtual
+# ("Wiimote Gamepad"). Al cambiar de ventana vuelve el perfil elegido, sin tocarlo.
+# Los botones que no estén aquí siguen igual (Home: menú y cambiar de perfil). Un botón con
+# hold no puede mantenerse (su acción va al soltar), por eso B es gatillo y no embrague: quítalo
+# de aquí para recuperar el embrague. Botones: BTN_SOUTH/EAST/NORTH/WEST, BTN_TL/TR/TL2/TR2,
+# BTN_SELECT, BTN_START, BTN_MODE, BTN_THUMBL/THUMBR, BTN_DPAD_UP/DOWN/LEFT/RIGHT.
+[gamepad]
+games = []                  # sin mapeo propio, p. ej. ["retroarch", "steam_app_"]
+a = "pad:BTN_SOUTH"
+b = "pad:BTN_TR2"
+one = "pad:BTN_WEST"
+two = "pad:BTN_EAST"
+up = "pad:BTN_DPAD_UP"
+down = "pad:BTN_DPAD_DOWN"
+left = "pad:BTN_DPAD_LEFT"
+right = "pad:BTN_DPAD_RIGHT"
+plus = "pad:BTN_START"
+minus = "pad:BTN_SELECT"
+# Mapeo propio de un juego (también lo añade a la lista); title = regex del título de la ventana
+
+[gamepad."dolphin-emu"]
+# Solo la ventana del juego: su título lleva el ID del disco "(RMGE01)" o las estadísticas "|";
+# la de la lista de juegos se llama "Dolphin <versión>"
+title = '\([A-Z0-9]{6}\)|\|'

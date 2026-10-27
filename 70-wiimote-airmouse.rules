@@ -1,0 +1,8 @@
+# Wiimote air mouse (wiimote-airmouse): acceso del usuario con sesión activa (uaccess)
+# a /dev/uinput y a los evdev del Wiimote, sin grupo input ni sudo.
+# Prefijo < 73: 73-seat-late.rules convierte el tag uaccess en ACL.
+KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Nintendo Wii Remote*", TAG+="uaccess"
+# LEDs del mando (perfil activo de wiimote-airmouse): sysfs no admite uaccess, así que se abre
+# el permiso de escritura de brightness (solo son los 4 LEDs azules del Wiimote)
+SUBSYSTEM=="leds", KERNEL=="*:057E:03[03][06].*:blue:p[0-3]", RUN+="/bin/chmod 0666 /sys%p/brightness"

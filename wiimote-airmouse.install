@@ -1,0 +1,15 @@
+# Aplica la regla udev a lo ya conectado (el hook de systemd solo recarga las reglas)
+_trigger() {
+    udevadm trigger --subsystem-match=misc --subsystem-match=input --subsystem-match=leds 2>/dev/null || true
+}
+
+post_install() {
+    _trigger
+    echo "Enable the service: systemctl --user enable --now wiimote-airmouse"
+    echo "Config example: /usr/share/doc/wiimote-airmouse/airmouse.example.toml"
+}
+
+post_upgrade() {
+    _trigger
+    echo "Restart the service: systemctl --user restart wiimote-airmouse"
+}

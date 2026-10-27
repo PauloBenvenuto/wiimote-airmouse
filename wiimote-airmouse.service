@@ -1,0 +1,14 @@
+# Wiimote como air mouse (wiimote-airmouse). Espera al mando y se reconecta solo.
+# Necesita 70-wiimote-airmouse.rules (acceso a /dev/uinput y al Wiimote sin sudo).
+[Unit]
+Description=Wiimote air mouse (gyro pointer + buttons)
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart=/usr/bin/wiimote-airmouse
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
