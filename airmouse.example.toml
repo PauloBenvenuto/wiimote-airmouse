@@ -56,7 +56,8 @@ low_battery = 15      # % al que avisa con una notificación
 #   "clutch" (embrague: el cursor no se mueve) | "cleartext" (borrar todo el texto; en
 #     terminales Ctrl+E Ctrl+U) | "wsdrag" (arrastrar la ventana a otro escritorio)
 #   "keyboard" (abrir/cerrar el teclado en pantalla si hay un campo de texto con foco) | "none"
-# Dos botones juntos: "a+b" = … (pulsarlos a la vez, con 150 ms de margen)
+# Dos botones juntos: "a+b" = … (pulsarlos a la vez, con 150 ms de margen). Si uno tiene acción
+# de mantener (B) también vale mantenerlo y pulsar el otro, varias veces sin soltar
 a = "button:BTN_LEFT"
 b = "button:BTN_RIGHT"
 one = "key:KEY_ENTER"

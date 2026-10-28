@@ -793,13 +793,20 @@ class AirMouse:
             self.swallow.add(code)  # la pulsación que despierta no hace su acción
             return
         action = prof["actions"].get(code)
-        in_chord = any(code in chord for chord in prof["chords"])
+        # Solo espera a la combinación si el otro botón puede llegar después: uno con acción de
+        # mantener va siempre primero (b+left = mantener B y pulsar ←), así ← no se retrasa
+        in_chord = any(code in chord and any(c not in prof["hold"] for c in chord - {code})
+                       for chord in prof["chords"])
         if ev.value == 1:
             if self.chord:
                 return
-            # Combinación: el otro botón sigue en espera (aún no hizo nada) → empieza la combinación
+            # Combinación: el otro botón sigue en espera (aún no hizo nada) → empieza la combinación.
+            # Si ya se mantiene (B con el embrague) también, salvo que este tenga acción de mantener;
+            # su acción de mantener sigue activa y se puede repetir la combinación sin soltarlo
+            held_ok = code not in prof["hold"]
             for chord, chord_action in prof["chords"].items():
-                if code in chord and all(c in self.pending for c in chord - {code}):
+                if code in chord and all(c in self.pending or (held_ok and c in self.holding)
+                                         for c in chord - {code}):
                     for c in chord:
                         self.pending.pop(c, None)
                     self.chord = (chord, chord_action)
@@ -813,8 +820,12 @@ class AirMouse:
         # Soltar
         if self.chord and code in self.chord[0]:
             chord, chord_action = self.chord
-            self.chord, self.swallow = None, set(chord - {code})
+            # El que se mantenía (B) no se ignora: su soltar termina su acción de mantener
+            self.chord, self.swallow = None, set(chord - {code} - self.holding)
             self.do_action(chord_action, 0)
+            if code in self.holding:
+                self.holding.discard(code)
+                self.do_action(prof["hold"][code], 0)
         elif code in self.swallow:
             self.swallow.discard(code)
         elif code in self.holding:

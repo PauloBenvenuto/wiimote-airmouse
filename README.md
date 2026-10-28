@@ -8,7 +8,7 @@ escribe en un ratón+teclado virtual (uinput). Incluye:
 - **Puntero con giroscopio**: suavizado con filtro 1€, el movimiento se emite a ritmo fijo (250 Hz) y
   el offset se recalibra solo en reposo. Con `span`, la velocidad se ajusta al ancho del escritorio.
 - **Perfiles de botones** (Home mantenido cambia de perfil; los LED del mando muestran cuál está activo),
-  acciones al mantener, combinaciones de dos botones (`a+b`), embrague y borrar texto.
+  acciones al mantener, combinaciones de dos botones (`a+b`, o mantener B y pulsar otro), embrague y borrar texto.
 - **Modo juego**: si la ventana enfocada es de un juego de la lista, los botones van a un mando
   virtual ("Wiimote Gamepad").
 - **Ahorro de batería**: apaga los sensores si está quieto, lo desconecta tras un rato y avisa
