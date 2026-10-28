@@ -89,6 +89,8 @@ DEFAULTS = {
 CHORD_MS = 150  # margen para pulsar los dos botones de una combinación (a+b)
 TERMINALS = ("ghostty", "kitty", "foot", "alacritty", "wezterm", "konsole", "xterm")
 STATE = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "wiimote-airmouse/profile"
+# Offset del giroscopio guardado: al conectar el puntero funciona ya, sin esperar a un reposo
+BIAS = STATE.parent / "gyro-bias"
 KEYBOARD = Path(__file__).resolve().parent / "wii-keyboard"
 KEYBOARD_SOCK = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")) / "wii-keyboard.sock"
 
@@ -386,7 +388,12 @@ class Pointer:
         self.reset()
 
     def reset(self):
-        self.bias = None
+        try:
+            self.bias = [float(v) for v in BIAS.read_text().split()][:2] or None
+        except (OSError, ValueError):
+            self.bias = None
+        self.bias_saved = time.monotonic()  # se guarda en reposos ya confirmados, no al calibrar
+        self.stable_since = None  # estable pero lejos del offset desde (timestamp del informe)
         self.gyro = {e.ABS_RX: 0, e.ABS_RY: 0, e.ABS_RZ: 0}
         self.accel = {e.ABS_RX: 0, e.ABS_RY: 0, e.ABS_RZ: 0}
         self.window = deque()  # (t, (gx, gy, ax, ay, az))
@@ -402,6 +409,14 @@ class Pointer:
         self.resting = False
         self.rest_since = None  # monotonic desde que está en reposo (para dormir el mando)
         self.last_debug = 0.0
+
+    def save_bias(self):
+        self.bias_saved = time.monotonic()
+        try:
+            BIAS.parent.mkdir(parents=True, exist_ok=True)
+            BIAS.write_text(f"{self.bias[0]:.1f} {self.bias[1]:.1f}\n")
+        except OSError as err:
+            log(f"Could not save the gyro offset: {err}")
 
     def add_sample(self, sample, sign):
         for i, v in enumerate(sample):
@@ -447,12 +462,25 @@ class Pointer:
             sd = [math.sqrt(max(q / n - m * m, 0.0)) for q, m in zip(self.sqsums, mean)]
             gyro_sd = max(sd[:2]) / UNITS_PER_DPS
             accel_sd = max(sd[2:])
-            resting = gyro_sd < r["gyro_threshold"] and accel_sd < r["accel_threshold"]
+            # Primera calibración sin offset guardado: umbrales más holgados, para que baste con
+            # sujetar el mando quieto en la mano (luego se afina en cada reposo)
+            k = 1 if self.bias is not None else 2
+            resting = gyro_sd < r["gyro_threshold"] * k and accel_sd < r["accel_threshold"] * k
             # Un giro constante (yaw a velocidad fija) también es "estable": solo es reposo si
             # la media está cerca del offset ya calibrado
-            if resting and self.bias is not None:
+            # (salvo que siga estable 3 s: nadie gira tan parejo tanto rato, así que el offset
+            # estaba mal, p. ej. el guardado de otro mando, y se recalibra)
+            if not resting:
+                self.stable_since = None
+            elif self.bias is not None:
                 drift = max(abs(mean[0] - self.bias[0]), abs(mean[1] - self.bias[1]))
-                resting = drift / UNITS_PER_DPS < max(p["deadzone"], r["gyro_threshold"]) * 2
+                if drift / UNITS_PER_DPS >= max(p["deadzone"], r["gyro_threshold"]) * 2:
+                    self.stable_since = self.stable_since or t
+                    resting = t - self.stable_since > 3
+                    if resting:
+                        self.bias, self.stable_since = None, None
+                else:
+                    self.stable_since = None
         else:
             gyro_sd = accel_sd = float("nan")
             resting = False
@@ -467,6 +495,8 @@ class Pointer:
             log("rest" if resting else "moving")
         if resting and not self.resting:
             self.rest_since = time.monotonic()
+            if self.rest_since - self.bias_saved > 60:
+                self.save_bias()
         elif not resting:
             self.rest_since = None
         self.resting = resting
