@@ -96,4 +96,4 @@ Cuando funcione, `makepkg -si` y `systemctl --user restart wiimote-airmouse`.
 
 ## Licencia
 
-MIT (ver `LICENSE`).
+Copyright (c) 2026 Paulo Benvenuto. GPL-3.0 o posterior (ver `LICENSE`): puedes usarlo, modificarlo y venderlo, pero lo que distribuyas basado en él también tiene que ser código abierto con esta licencia.
