@@ -93,3 +93,7 @@ systemctl --user stop wiimote-airmouse && ./wiimote-airmouse --debug
 Cuando funcione, `makepkg -si` y `systemctl --user restart wiimote-airmouse`.
 
 `protocols/input-method-unstable-v2.xml` es de wlroots, con licencia MIT; su aviso va dentro del archivo.
+
+## Licencia
+
+MIT (ver `LICENSE`).
